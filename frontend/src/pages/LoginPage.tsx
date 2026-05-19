@@ -1,5 +1,8 @@
-import { useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
+
+const GITHUB_LOGIN_URL = `${import.meta.env.VITE_API_BASE_URL}/oauth2/authorization/github`;
 
 const GithubIcon = ({ className }: { className?: string }) => (
   <svg
@@ -21,12 +24,28 @@ const GithubIcon = ({ className }: { className?: string }) => (
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const login = useAuthStore((state) => state.login);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+
+  useEffect(() => {
+    // 백엔드가 리다이렉트한 URL에서 JWT 토큰 추출: /login?token=xxxx
+    const token = searchParams.get('token');
+    if (token) {
+      login(token);
+      navigate('/onboarding', { replace: true });
+      return;
+    }
+
+    // 이미 로그인 상태라면 바로 메인으로
+    if (isAuthenticated) {
+      navigate('/functional', { replace: true });
+    }
+  }, [searchParams, login, navigate, isAuthenticated]);
 
   const handleLogin = () => {
-    login(); // 임시 모의 로그인 상태 업데이트
-    // 임시 모의 로그인 후 온보딩으로 이동
-    navigate('/onboarding');
+    // 실제 GitHub OAuth 로그인 시작 (백엔드로 리다이렉트)
+    window.location.href = GITHUB_LOGIN_URL;
   };
 
   return (
