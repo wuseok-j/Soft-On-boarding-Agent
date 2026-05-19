@@ -3,16 +3,18 @@ import { persist } from 'zustand/middleware';
 
 interface AuthState {
   isAuthenticated: boolean;
-  login: () => void;
+  token: string | null;
+  login: (token: string) => void;
   logout: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      isAuthenticated: false, // 초기 상태는 비로그인
-      login: () => set({ isAuthenticated: true }),
-      logout: () => set({ isAuthenticated: false }),
+      isAuthenticated: false,
+      token: null,
+      login: (token: string) => set({ isAuthenticated: true, token }),
+      logout: () => set({ isAuthenticated: false, token: null }),
     }),
     {
       name: 'auth-storage', // 브라우저 localStorage에 저장
