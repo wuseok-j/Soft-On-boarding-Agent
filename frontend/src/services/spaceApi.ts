@@ -1,15 +1,4 @@
-import { useAuthStore } from '../store/authStore';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-
-// 공통 Fetch 옵션 생성기 (JWT 포함)
-const getAuthHeaders = () => {
-  const token = useAuthStore.getState().token;
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-};
+import { apiFetch } from './apiClient';
 
 export interface CreateSpaceRequest {
   name: string;
@@ -83,9 +72,8 @@ export const spaceApi = {
   // ======================================================================
 
   createSpace: async (data: CreateSpaceRequest): Promise<CreateSpaceResponse> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces`, {
+    const response = await apiFetch(`/api/spaces`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
 
@@ -98,9 +86,8 @@ export const spaceApi = {
   },
 
   joinSpace: async (teamCode: string, jobRole: string): Promise<void> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/join`, {
+    const response = await apiFetch(`/api/spaces/join`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify({ teamCode, jobRole }),
     });
 
@@ -111,9 +98,8 @@ export const spaceApi = {
   },
 
   leaveSpace: async (): Promise<void> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/leave`, {
+    const response = await apiFetch(`/api/spaces/leave`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -126,9 +112,8 @@ export const spaceApi = {
   // ======================================================================
 
   getCommits: async (teamCode: string): Promise<CommitHistoryDto[]> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/${teamCode}/commits`, {
+    const response = await apiFetch(`/api/spaces/${teamCode}/commits`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -144,9 +129,8 @@ export const spaceApi = {
    * 스페이스 전환 시 DB에 데이터가 없을 때 호출합니다.
    */
   syncCommits: async (teamCode: string): Promise<CommitHistoryDto[]> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/${teamCode}/commits/sync`, {
+    const response = await apiFetch(`/api/spaces/${teamCode}/commits/sync`, {
       method: 'POST',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -163,9 +147,8 @@ export const spaceApi = {
 
   /** 태스크 목록 조회 */
   getTasks: async (teamCode: string): Promise<BoardTaskDto[]> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/${teamCode}/tasks`, {
+    const response = await apiFetch(`/api/spaces/${teamCode}/tasks`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -178,9 +161,8 @@ export const spaceApi = {
 
   /** 새 태스크 생성 (수기 입력 메모장용) */
   createTask: async (teamCode: string, title: string): Promise<BoardTaskDto> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/${teamCode}/tasks`, {
+    const response = await apiFetch(`/api/spaces/${teamCode}/tasks`, {
       method: 'POST',
-      headers: getAuthHeaders(),
       body: JSON.stringify({ title, status: 'TODO' }),
     });
 
@@ -202,7 +184,6 @@ export const spaceApi = {
       `${API_BASE_URL}/api/spaces/${teamCode}/tasks/${taskId}/status`,
       {
         method: 'PATCH',
-        headers: getAuthHeaders(),
         body: JSON.stringify({ status }),
       }
     );
@@ -217,9 +198,8 @@ export const spaceApi = {
 
   /** 태스크 삭제 */
   deleteTask: async (taskId: number): Promise<void> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/tasks/${taskId}`, {
+    const response = await apiFetch(`/api/spaces/tasks/${taskId}`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -233,9 +213,8 @@ export const spaceApi = {
   // ======================================================================
 
   getFunctionalView: async (spaceId: number): Promise<FunctionalViewResponseDto> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/${spaceId}/functional-view`, {
+    const response = await apiFetch(`/api/spaces/${spaceId}/functional-view`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -251,9 +230,8 @@ export const spaceApi = {
   // ======================================================================
 
   getMembers: async (spaceId: number): Promise<MemberResponse[]> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/${spaceId}/members`, {
+    const response = await apiFetch(`/api/spaces/${spaceId}/members`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -265,9 +243,8 @@ export const spaceApi = {
   },
 
   assignAdmin: async (spaceId: number, userId: number): Promise<void> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/${spaceId}/members/${userId}/assign-admin`, {
+    const response = await apiFetch(`/api/spaces/${spaceId}/members/${userId}/assign-admin`, {
       method: 'PATCH',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -277,9 +254,8 @@ export const spaceApi = {
   },
 
   kickMember: async (spaceId: number, userId: number): Promise<void> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/${spaceId}/members/${userId}/kick`, {
+    const response = await apiFetch(`/api/spaces/${spaceId}/members/${userId}/kick`, {
       method: 'DELETE',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {

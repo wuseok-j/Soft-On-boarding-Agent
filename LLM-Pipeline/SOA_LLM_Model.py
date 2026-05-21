@@ -13,7 +13,7 @@ load_dotenv(dotenv_path=env_path)
 # pyrefly: ignore [missing-import]
 from supabase import create_client, Client
 from datetime import datetime, timezone
-from github_analyzer import analyze_single_repository, fetch_recent_commits, fetch_file_contents
+from github_analyzer import analyze_single_repository, fetch_recent_commits, fetch_file_contents, fetch_file_contents_dict
 from llm_engine import analyze_functional_view, analyze_interface_view, analyze_data_view, analyze_process_view
 from urllib.parse import urlparse
 
@@ -187,9 +187,9 @@ def main():
     print("  Functional View 분석 중...")
     func_files = categorized_files.get("Functional", [])
     if func_files:
-        func_content = fetch_file_contents(USERNAME, GITHUB_TOKEN, REPO_NAME, func_files)
-        if func_content:
-            func_data = analyze_functional_view(REPO_NAME, func_content)
+        func_content_dict = fetch_file_contents_dict(USERNAME, GITHUB_TOKEN, REPO_NAME, func_files)
+        if func_content_dict:
+            func_data = analyze_functional_view(REPO_NAME, func_content_dict)
 
             if func_data and isinstance(func_data, list):
                 forest_nodes = [item for item in func_data if item.get("element_type") == "FOREST"]

@@ -26,7 +26,7 @@ const GithubIcon = ({ className }: { className?: string }) => (
 export function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, isAuthenticated, user } = useAuthStore();
+  const { login, logout, isAuthenticated, user } = useAuthStore();
 
   useEffect(() => {
     const token = searchParams.get('token');
@@ -38,7 +38,7 @@ export function LoginPage() {
         
         if (userProfile.teamCode) {
           // 이미 팀이 있으면 profile도 조회해서 spaceId까지 저장
-          const profile = await userApi.getProfile(authToken);
+          const profile = await userApi.getProfile();
           login(authToken, {
             teamCode: userProfile.teamCode,
             spaceId: profile.teamInfo?.spaceId ?? null,
@@ -51,8 +51,8 @@ export function LoginPage() {
         }
       } catch (error) {
         console.error('Failed to verify user:', error);
-        login(authToken, { teamCode: null, spaceId: null, isAdmin: false });
-        navigate('/onboarding', { replace: true });
+        logout();
+        navigate('/login', { replace: true });
       }
     };
 

@@ -1,6 +1,5 @@
 import { useAuthStore } from '../store/authStore';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+import { apiFetch } from './apiClient';
 
 export const getAuthHeaders = () => {
   const token = useAuthStore.getState().token;
@@ -40,7 +39,7 @@ export const userApi = {
       ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
       : getAuthHeaders();
 
-    const response = await fetch(`${API_BASE_URL}/api/users/me`, {
+    const response = await apiFetch('/api/users/me', {
       method: 'GET',
       headers,
     });
@@ -53,7 +52,7 @@ export const userApi = {
   },
 
   getProfile: async (): Promise<UserProfileResponse> => {
-    const response = await fetch(`${API_BASE_URL}/api/users/me/profile`, {
+    const response = await apiFetch('/api/users/me/profile', {
       method: 'GET',
       headers: getAuthHeaders(),
     });

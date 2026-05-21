@@ -1,14 +1,4 @@
-import { useAuthStore } from '../store/authStore';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-
-const getAuthHeaders = () => {
-  const token = useAuthStore.getState().token;
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-};
+import { apiFetch } from './apiClient';
 
 export interface FunctionalNodeData {
   label: string;
@@ -53,9 +43,8 @@ export interface CommitSummary {
 
 export const functionalViewApi = {
   getFunctionalView: async (spaceId: number): Promise<FunctionalViewResponse> => {
-    const response = await fetch(`${API_BASE_URL}/api/spaces/${spaceId}/functional-view`, {
+    const response = await apiFetch(`/api/spaces/${spaceId}/functional-view`, {
       method: 'GET',
-      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -73,11 +62,10 @@ export const functionalViewApi = {
    * FOREST 노드처럼 filePath가 없는 경우 빈 배열을 반환합니다.
    */
   getCommitsForElement: async (spaceId: number, elementId: number): Promise<CommitSummary[]> => {
-    const response = await fetch(
-      `${API_BASE_URL}/api/spaces/${spaceId}/functional-elements/${elementId}/commits`,
+    const response = await apiFetch(
+      `/api/spaces/${spaceId}/functional-elements/${elementId}/commits`,
       {
         method: 'GET',
-        headers: getAuthHeaders(),
       }
     );
 

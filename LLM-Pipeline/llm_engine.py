@@ -60,69 +60,204 @@ def categorize_files_with_gemini(file_paths):
             
     return categorized
 
-def analyze_functional_view(repo_name, files_content_str):
-    system_prompt = """
-    너는 시니어 백엔드 아키텍트야. 제공된 소스코드 파일들을 분석해서 비즈니스 로직과 서비스 계층이 어떻게 구성되어 있는지 분석해줘.
-    중요: 하나의 레포지토리에 있는 모든 데이터를 생략되는 것 없이 최대한 많이 추출해서 응답해야 해.
+def extract_domain_from_path(file_path: str) -> str:
+    """
+    경로 기반으로 언어/프레임워크 무관하게 확정적(Deterministic)인 도메인 명을 추출합니다.
+    """
+    if not file_path:
+        return "Core Domain"
+        
+    ignored_folders = {
+        'src', 'main', 'java', 'com', 'net', 'org', 'app', 'lib', 'pkg', 
+        'internal', 'components', 'pages', 'services', 'controllers', 'views', 
+        'utils', 'api', 'domain', 'routes', 'hooks', 'store', 'tests', 'test', 'spec', 'bin',
+        'dto', 'entity', 'repository', 'controller', 'model', 'exception', 'config'
+    }
     
-    비즈니스 레이어 구조는 다음 세 단계 계층 구조로 이루어져 있어:
-    1. FOREST (도메인 또는 패키지 단위)
-    2. TREE (클래스 또는 파일 단위) - 상위 FOREST 요소를 부모로 가짐
-    3. RING (메서드 또는 API 엔드포인트 단위) - 상위 TREE 요소를 부모로 가짐
+    # 1. 파일의 부모 디렉토리 경로 추출
+    dir_path = os.path.dirname(file_path)
+    if not dir_path:
+        # 루트 디렉토리의 파일인 경우
+        return "Core Domain"
+        
+    parts = dir_path.split('/')
+    
+    # 2. 의미 없는 아키텍처 폴더 필터링
+    filtered_parts = [p for p in parts if p and p.lower() not in ignored_folders]
+    
+    # 3. 마지막(핵심) 폴더명을 도메인 이름으로 지정
+    if filtered_parts:
+        last_part = filtered_parts[-1]
+        # Kebab/Snake case를 공백으로 변환하고 대문자화 (예: user-auth -> User Auth)
+        formatted_name = last_part.replace('-', ' ').replace('_', ' ').title()
+        return f"{formatted_name} Domain"
+        
+    # 필터링 후 남은게 없다면 (예: src/components 직하위) 
+    # 원래 parts의 마지막 유효한 디렉토리 이름 사용 (components 자체)
+    last_valid = [p for p in parts if p]
+    if last_valid:
+        formatted_name = last_valid[-1].replace('-', ' ').replace('_', ' ').title()
+        return f"{formatted_name} Domain"
+        
+    return "Core Domain"
 
-    반드시 다음 JSON 배열 형태로만 응답해. 각 객체는 다음 키로만 구성되어야 해:
-    temp_id, parent_temp_id, name, element_type, description, file_path, api_method, api_url
+def call_gemini_with_retry(model_name: str, contents: str, config: types.GenerateContentConfig, view_name: str):
+    """Gemini API 호출 시 Rate Limit(429) 등 오류 발생 시 스마트 재시도를 수행하는 헬퍼 함수"""
+    import time
+    import re
+    
+    def _get_retry_delay(err_str, default=60):
+        m = re.search(r'Please retry in (\d+\.?\d*)s', err_str)
+        return float(m.group(1)) + 1.0 if m else default
 
-    - temp_id: 해당 요소의 임시 고유 ID (예: "1", "2", "3" 등 문자열)
-    - parent_temp_id: 부모 요소의 임시 고유 ID (상위 FOREST가 없는 FOREST 요소는 null, TREE 요소는 부모 FOREST의 temp_id, RING 요소는 부모 TREE의 temp_id)
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            return client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config
+            )
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "Quota" in err_str:
+                if attempt < max_retries - 1:
+                    wait_time = _get_retry_delay(err_str, 60)
+                    logger.warning(f"[{view_name}] 429 Rate Limit 초과. {wait_time:.1f}초 대기 후 재시도... ({attempt+1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+            logger.error(f"[{view_name}] LLM 분석 중 예외 발생: {e}")
+            return None
+    return None
 
+def analyze_functional_view(repo_name, files_content_dict):
+    system_prompt = """
+    너는 시니어 백엔드 아키텍트야. 주어진 여러 소스코드 파일들을 분석해.
+    
+    [핵심 지시사항]
+    파일 내용들을 바탕으로 분석 결과를 아래와 같은 JSON 배열 형태로 반환해. 반드시 다음 형태를 지켜야 해:
     [
       {
-        "temp_id": "1",
-        "parent_temp_id": null,
-        "name": "User Domain",
-        "element_type": "FOREST",
-        "description": "유저 관련 비즈니스 도메인",
-        "file_path": null,
-        "api_method": null,
-        "api_url": null
-      },
-      {
-        "temp_id": "2",
-        "parent_temp_id": "1",
-        "name": "UserService",
-        "element_type": "TREE",
-        "description": "유저 관련 핵심 비즈니스 로직 처리 클래스",
-        "file_path": "src/main/java/com/vector/onboarding/domain/user/UserService.java",
-        "api_method": null,
-        "api_url": null
-      },
-      {
-        "temp_id": "3",
-        "parent_temp_id": "2",
-        "name": "createUser",
-        "element_type": "RING",
-        "description": "새로운 유저 정보 생성 및 저장 메서드",
-        "file_path": "src/main/java/com/vector/onboarding/domain/user/UserService.java",
-        "api_method": "POST",
-        "api_url": "/api/v1/users"
+        "file_path": "분석한 파일의 경로",
+        "trees": [
+          {
+            "name": "클래스명 또는 주요 구조체명",
+            "description": "이 클래스/구조체의 역할 설명",
+            "rings": [
+              {
+                "name": "메서드명 또는 함수명",
+                "description": "이 메서드/함수의 역할",
+                "api_method": "HTTP 메서드 (예: GET, POST 등. 없으면 null)",
+                "api_url": "API 엔드포인트 경로 (없으면 null)"
+              }
+            ]
+          }
+        ]
       }
     ]
+
+    [필터링 지시사항 (매우 중요)]
+    신규 입사자의 인지 과부하를 막기 위해, 모든 메서드를 다 뽑지 말고 핵심만 엄선해.
+    1. **추출 대상**: [외부와 통신하는 API 엔드포인트]와 [핵심 비즈니스 로직을 담당하는 Public 메서드] 등, 이 클래스/파일에서 가장 중요한 역할(진입점)을 하는 핵심 요소만 `rings`로 반환해.
+    2. **제외 대상 (절대 추출 금지)**: 단순 유틸리티 함수, 데이터 파싱용 헬퍼 메서드, Private 메서드, Getter/Setter 등은 절대 추출하지 마.
+
+    [중요 예외 처리]
+    만약 파일에 명시적인 클래스 선언이 없고 함수만 존재하는 경우(예: 파이썬 스크립트, React 컴포넌트, 유틸리티 등), 
+    **파일 이름 자체나 모듈 역할**을 하나의 `tree`로 만들고, 파일 내의 핵심 함수들을 해당 `tree`의 `rings` 배열 안에 넣어.
     """
     
-    response = client.models.generate_content(
-        model='gemini-3.1-flash-lite',
-        contents=f"레포지토리: {repo_name}\n\n파일 내용들:\n{files_content_str}",
+    # 1. 단일 텍스트로 병합
+    combined_content = ""
+    for file_path, content in files_content_dict.items():
+        combined_content += f"\n\n--- FILE: {file_path} ---\n{content}"
+        
+    response = call_gemini_with_retry(
+        model_name='gemini-3.5-flash',
+        contents=f"레포지토리: {repo_name}\n\n파일 내용 모음:{combined_content}",
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=0.2,
             response_mime_type="application/json"
-        )
+        ),
+        view_name="Functional View"
     )
-    try:
-        return json.loads(response.text)
-    except json.JSONDecodeError:
+    
+    if not response:
         return []
+        
+    raw_text = response.text
+    cleaned_text = re.sub(r'^```(json)?|```$', '', raw_text.strip(), flags=re.MULTILINE).strip()
+    try:
+        results = json.loads(cleaned_text)
+    except Exception as e:
+        logger.error(f"[Functional View] JSON 파싱 실패: {e}")
+        return []
+        
+    if not isinstance(results, list):
+        results = [results]
+        
+    # 조립 파트
+    final_nodes = []
+    forest_map = {} # domain_name -> temp_id
+    temp_id_counter = 1
+    
+    for file_res in results:
+        if not file_res or not isinstance(file_res, dict):
+            continue
+            
+        file_path = file_res.get("file_path", "")
+        # 경로 기반으로 확정적(Deterministic) 도메인 이름 생성
+        domain_name = extract_domain_from_path(file_path)
+            
+        if domain_name not in forest_map:
+            forest_map[domain_name] = str(temp_id_counter)
+            final_nodes.append({
+                "temp_id": str(temp_id_counter),
+                "parent_temp_id": None,
+                "name": domain_name,
+                "element_type": "FOREST",
+                "description": f"{domain_name} 비즈니스 영역",
+                "file_path": None,
+                "api_method": None,
+                "api_url": None
+            })
+            temp_id_counter += 1
+            
+        forest_id = forest_map[domain_name]
+        
+        trees = file_res.get("trees", [])
+        for tree in trees:
+            tree_id = str(temp_id_counter)
+            temp_id_counter += 1
+            
+            final_nodes.append({
+                "temp_id": tree_id,
+                "parent_temp_id": forest_id,
+                "name": tree.get("name", "Unknown"),
+                "element_type": "TREE",
+                "description": tree.get("description", ""),
+                "file_path": file_path,
+                "api_method": None,
+                "api_url": None
+            })
+            
+            rings = tree.get("rings", [])
+            for ring in rings:
+                ring_id = str(temp_id_counter)
+                temp_id_counter += 1
+                
+                final_nodes.append({
+                    "temp_id": ring_id,
+                    "parent_temp_id": tree_id,
+                    "name": ring.get("name", "Unknown"),
+                    "element_type": "RING",
+                    "description": ring.get("description", ""),
+                    "file_path": file_path,
+                    "api_method": ring.get("api_method"),
+                    "api_url": ring.get("api_url")
+                })
+                
+    return final_nodes
 
 def analyze_interface_view(repo_name, files_content_str):
     """
@@ -161,15 +296,20 @@ def analyze_interface_view(repo_name, files_content_str):
     ]
     """
     
-    response = client.models.generate_content(
-        model='gemini-3.1-flash-lite',
+    response = call_gemini_with_retry(
+        model_name='gemini-3.5-flash',
         contents=f"레포지토리: {repo_name}\n\n파일 내용들:\n{files_content_str}",
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=0.2,
             response_mime_type="application/json"
-        )
+        ),
+        view_name="Interface View"
     )
+    
+    if not response:
+        return []
+        
     try:
         return json.loads(response.text)
     except json.JSONDecodeError:
