@@ -2,7 +2,7 @@ import { useAuthStore } from '../store/authStore';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
-const getAuthHeaders = () => {
+export const getAuthHeaders = () => {
   const token = useAuthStore.getState().token;
   return {
     'Content-Type': 'application/json',

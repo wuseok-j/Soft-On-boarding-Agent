@@ -7,6 +7,8 @@ import { DataView } from './pages/DataView';
 import { InterfaceView } from './pages/InterfaceView';
 import { ProcessFlowView } from './pages/ProcessFlowView';
 import { QAView } from './pages/QAView';
+import { QAWrite } from './pages/QAWrite';
+import { QADetail } from './pages/QADetail';
 import { SettingsView } from './pages/SettingsView';
 import { MemberManagementView } from './pages/MemberManagementView';
 import { useAuthStore } from './store/authStore';
@@ -72,7 +74,11 @@ function App() {
           <Route path="data" element={<DataView />} />
           <Route path="interface" element={<InterfaceView />} />
           <Route path="process-flow" element={<ProcessFlowView />} />
-          <Route path="qa" element={<QAView />} />
+          <Route path="qa">
+            <Route index element={<QAView />} />
+            <Route path="write" element={<QAWrite />} />
+            <Route path=":id" element={<QADetail />} />
+          </Route>
           <Route path="settings" element={<SettingsView />} />
           <Route 
             path="members" 
