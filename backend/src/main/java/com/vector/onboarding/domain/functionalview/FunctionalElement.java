@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(
-    name = "\"Functional\"",
+    name = "functional",
     indexes = {
         @Index(name = "idx_functional_space_id", columnList = "space_id")
     }
