@@ -18,6 +18,7 @@ import { ServiceNode } from '../components/diagram/ServiceNode';
 import { MethodNode } from '../components/diagram/MethodNode';
 import { ContextDrawer } from '../components/common/ContextDrawer';
 import { spaceApi } from '../services/spaceApi';
+import { functionalViewApi, type CommitSummary } from '../services/functionalViewApi';
 import { useAuthStore } from '../store/authStore';
 
 const nodeTypes = {
@@ -79,6 +80,9 @@ function FunctionalViewContent() {
   
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  // 노드 클릭 시 조회한 실제 커밋 히스토리
+  const [nodeCommits, setNodeCommits] = useState<CommitSummary[]>([]);
+  const [isCommitsLoading, setIsCommitsLoading] = useState(false);
 
   const { fitView } = useReactFlow();
 
@@ -115,12 +119,36 @@ function FunctionalViewContent() {
     });
   }, []);
 
-  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+  const onNodeClick = useCallback(async (_event: React.MouseEvent, node: Node) => {
     if (node.type === 'serviceNode' || node.type === 'methodNode') {
+      // 1. Drawer를 즉시 열어 빠른 반응성 확보
       setSelectedNode(node);
       setIsDrawerOpen(true);
+      setNodeCommits([]);
+
+      // 2. 커밋 히스토리는 비동기로 불러와 Drawer 안에서 스피너 → 리스트로 교체
+      if (!spaceId) return;
+      setIsCommitsLoading(true);
+      try {
+        const raw = await functionalViewApi.getCommitsForElement(
+          spaceId,
+          Number(node.id)
+        );
+        // SHA 기준 중복 제거 (GitHub API가 동일 커밋을 중복 반환하는 경우 방어)
+        const seen = new Set<string>();
+        const deduped = raw.filter(c => {
+          if (seen.has(c.sha)) return false;
+          seen.add(c.sha);
+          return true;
+        });
+        setNodeCommits(deduped);
+      } catch {
+        setNodeCommits([]);
+      } finally {
+        setIsCommitsLoading(false);
+      }
     }
-  }, []);
+  }, [spaceId]);
 
   // Compute Layout when data or expanded state changes
   useEffect(() => {
@@ -242,6 +270,8 @@ function FunctionalViewContent() {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         selectedNode={selectedNode}
+        commits={nodeCommits}
+        isCommitsLoading={isCommitsLoading}
       />
     </div>
   );
