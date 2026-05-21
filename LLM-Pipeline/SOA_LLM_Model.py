@@ -147,7 +147,7 @@ def main():
                 supabase.table("data").insert({
                     "repo_name": REPO_NAME,
                     "space_id": SPACE_ID,
-                    "analyzed_json": schema_data
+                    "file_list": schema_data
                 }).execute()
                 print("  ✅ Data View 적재 완료!")
             except Exception as e:
