@@ -56,6 +56,27 @@ export interface BoardTaskDto {
   createdAt: string;
 }
 
+// ---- Functional View DTO ----
+export interface FunctionalViewNodeDto {
+  id: string;
+  type: string; // 'forestNode', 'treeNode', 'ringNode'
+  parentId?: string | null;
+  data: Record<string, any>;
+  position: { x: number; y: number };
+}
+
+export interface FunctionalViewEdgeDto {
+  id: string;
+  source: string;
+  target: string;
+  animated: boolean;
+}
+
+export interface FunctionalViewResponseDto {
+  nodes: FunctionalViewNodeDto[];
+  edges: FunctionalViewEdgeDto[];
+}
+
 export const spaceApi = {
   // ======================================================================
   // Space
@@ -205,6 +226,24 @@ export const spaceApi = {
       const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData.message || '태스크 삭제에 실패했습니다.');
     }
+  },
+
+  // ======================================================================
+  // Functional View — AI 파이프라인 분석 데이터 조회
+  // ======================================================================
+
+  getFunctionalView: async (spaceId: number): Promise<FunctionalViewResponseDto> => {
+    const response = await fetch(`${API_BASE_URL}/api/spaces/${spaceId}/functional-view`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || 'Functional View 데이터를 불러오는데 실패했습니다.');
+    }
+
+    return response.json();
   },
 
   // ======================================================================

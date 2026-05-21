@@ -58,7 +58,6 @@ public class FunctionalElement {
     private ElementType elementType;
 
     /** AI가 요약한 로직 해설 */
-    @Lob
     @Column(columnDefinition = "TEXT")
     private String description;
 
