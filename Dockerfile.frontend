@@ -9,6 +9,9 @@ RUN npm install
 # Copy source files
 COPY frontend/ ./
 
+# Delete local .env files so they don't hardcode localhost during Docker build
+RUN rm -f .env .env.local .env.development
+
 # Define build argument for the API base URL.
 # Since we are using an Nginx reverse proxy to route /api to the backend,
 # the frontend should just call its own origin (e.g. '/' or '')
