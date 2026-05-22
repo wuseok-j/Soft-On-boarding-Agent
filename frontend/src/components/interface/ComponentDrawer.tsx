@@ -142,7 +142,9 @@ export function ComponentDrawer({ componentName, isOpen, onClose }: ComponentDra
   const [data, setData] = useState<ComponentInterfaceData | null>(null);
   const [fetchLoading, setFetchLoading] = useState(false);
 
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+  const API_BASE = import.meta.env.VITE_API_BASE_URL 
+    ? import.meta.env.VITE_API_BASE_URL 
+    : (import.meta.env.DEV ? 'http://localhost:8080' : '');
   const token = useAuthStore(state => state.token);
 
   const fetchComponentData = useCallback(async (name: string) => {
