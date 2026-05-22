@@ -13,7 +13,9 @@ import java.util.stream.Collectors;
 @Service
 public class SchemaParserService {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_COMMENTS, true)
+            .configure(com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_YAML_COMMENTS, true);
 
     private static class ParsedTable {
         String name;
@@ -22,9 +24,24 @@ public class SchemaParserService {
         Set<String> children = new HashSet<>();
     }
 
-    public String parseSchema(String fileContents) {
+    public String parseSchema(String fileContents, String filePath) {
         log.info("자바 정규식(Regex)을 활용하여 스키마 파일을 분석하고 레이아웃을 계산합니다 (LLM 미사용).");
-        
+
+        if (fileContents == null || fileContents.trim().isEmpty()) {
+            return "{ \"nodes\": [], \"edges\": [] }";
+        }
+
+        String schemaFileName = "JSON Data";
+        if (filePath != null && !filePath.isEmpty()) {
+            String normalizedPath = filePath.replace('\\', '/');
+            int lastSlash = normalizedPath.lastIndexOf('/');
+            if (lastSlash != -1) {
+                schemaFileName = normalizedPath.substring(lastSlash + 1);
+            } else {
+                schemaFileName = normalizedPath;
+            }
+        }
+
         Map<String, ParsedTable> tables = new LinkedHashMap<>();
         List<Map<String, Object>> edges = new ArrayList<>();
         Set<String> uniqueRelations = new HashSet<>();
@@ -34,26 +51,32 @@ public class SchemaParserService {
         // ============================================
         Pattern modelPattern = Pattern.compile("model\\s+(\\w+)\\s+\\{([^}]+)\\}", Pattern.MULTILINE);
         Matcher modelMatcher = modelPattern.matcher(fileContents);
-        
+
         while (modelMatcher.find()) {
             String modelName = modelMatcher.group(1);
             String body = modelMatcher.group(2);
             ParsedTable table = new ParsedTable();
             table.name = modelName;
-            
+
             String[] lines = body.split("\n");
             for (String line : lines) {
+                // Strip inline comments starting with //
+                int commentIndex = line.indexOf("//");
+                if (commentIndex != -1) {
+                    line = line.substring(0, commentIndex);
+                }
                 line = line.trim();
-                if (line.isEmpty() || line.startsWith("//") || line.startsWith("@@")) continue;
-                
+                if (line.isEmpty() || line.startsWith("@@"))
+                    continue;
+
                 String[] parts = line.split("\\s+");
                 if (parts.length >= 2) {
                     String colName = parts[0];
                     String colType = parts[1];
-                    
+
                     Map<String, String> colMap = new HashMap<>();
                     colMap.put("name", colName);
-                    
+
                     if (line.contains("@id")) {
                         colMap.put("type", colType + " (PK)");
                     } else if (line.contains("@unique")) {
@@ -62,7 +85,7 @@ public class SchemaParserService {
                         colMap.put("type", colType);
                     }
                     table.columns.add(colMap);
-                    
+
                     // 관계 정보 1차 수집
                     if (line.contains("@relation")) {
                         colMap.put("type", colType + " (FK)");
@@ -79,26 +102,31 @@ public class SchemaParserService {
         // ============================================
         // 2. SQL CREATE TABLE 파싱 로직
         // ============================================
-        Pattern sqlPattern = Pattern.compile("CREATE\\s+TABLE\\s+(\\w+)\\s+\\(([^;]+)\\);", Pattern.CASE_INSENSITIVE | Pattern.MULTILINE);
-        Matcher sqlMatcher = sqlPattern.matcher(fileContents);
-        
+        String sqlClean = cleanSqlComments(fileContents);
+        Pattern sqlPattern = Pattern.compile("CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(\\w+)\\s+\\(([^;]+)\\);",
+                Pattern.CASE_INSENSITIVE);
+        Matcher sqlMatcher = sqlPattern.matcher(sqlClean);
+
         while (sqlMatcher.find()) {
             String tableName = sqlMatcher.group(1);
             String body = sqlMatcher.group(2);
             ParsedTable table = new ParsedTable();
             table.name = tableName;
-            
+
             String[] lines = body.split(",");
             for (String line : lines) {
                 line = line.trim();
-                if (line.isEmpty() || line.toUpperCase().startsWith("PRIMARY KEY") || line.toUpperCase().startsWith("FOREIGN KEY")) continue;
-                
+                if (line.isEmpty() || line.toUpperCase().startsWith("PRIMARY KEY")
+                        || line.toUpperCase().startsWith("FOREIGN KEY"))
+                    continue;
+
                 String[] parts = line.split("\\s+");
                 if (parts.length >= 2) {
                     Map<String, String> colMap = new HashMap<>();
                     colMap.put("name", parts[0]);
                     String type = parts[1];
-                    if (line.toUpperCase().contains("PRIMARY KEY")) type += " (PK)";
+                    if (line.toUpperCase().contains("PRIMARY KEY"))
+                        type += " (PK)";
                     colMap.put("type", type);
                     table.columns.add(colMap);
                 }
@@ -109,27 +137,27 @@ public class SchemaParserService {
         // ============================================
         // 3. Python / pandas DataFrame 파싱 로직
         // ============================================
+        String pythonClean = cleanPythonComments(fileContents);
 
         // 파싱 제외할 임시/시각화용/헬퍼 변수명 목록
         Set<String> ignoreVars = new HashSet<>(Arrays.asList(
-            "df", "temp", "temp0", "temp1", "x", "y", "i", "j", "result",
-            "da_merge", "data_geod", "china_geod", "sentences", "segs",
-            "stopwords", "data", "da", "words", "peo", "lines", "elem",
-            "train_data", "test_data", "train_target", "test_target",
-            "coolpeo_list", "coolpeo_com", "coolpeo_movie_id",
-            "coolpeo_item", "coolpeo_item_com"
-        ));
+                "df", "temp", "temp0", "temp1", "x", "y", "i", "j", "result",
+                "da_merge", "data_geod", "china_geod", "sentences", "segs",
+                "stopwords", "data", "da", "words", "peo", "lines", "elem",
+                "train_data", "test_data", "train_target", "test_target",
+                "coolpeo_list", "coolpeo_com", "coolpeo_movie_id",
+                "coolpeo_item", "coolpeo_item_com"));
 
         // Pattern A: var = pd.read_csv/json/excel/table/sql(...) → 데이터 소스 테이블
         Pattern pdReadPattern = Pattern.compile(
-            "^(\\w+)\\s*=\\s*pd\\.read_(?:csv|json|excel|table|sql)\\s*\\(['\"]?([^'\"\\s,)]+)['\"]?",
-            Pattern.MULTILINE
-        );
-        Matcher pdReadMatcher = pdReadPattern.matcher(fileContents);
+                "^(\\w+)\\s*=\\s*pd\\.read_(?:csv|json|excel|table|sql)\\s*\\(['\"]?([^'\"\\s,)]+)['\"]?",
+                Pattern.MULTILINE);
+        Matcher pdReadMatcher = pdReadPattern.matcher(pythonClean);
         while (pdReadMatcher.find()) {
             String varName = pdReadMatcher.group(1);
             String sourcePath = pdReadMatcher.group(2);
-            if (ignoreVars.contains(varName) || varName.length() <= 1) continue;
+            if (ignoreVars.contains(varName) || varName.length() <= 1)
+                continue;
             ParsedTable table = tables.computeIfAbsent(varName.toLowerCase(), k -> {
                 ParsedTable t = new ParsedTable();
                 t.name = varName;
@@ -137,11 +165,11 @@ public class SchemaParserService {
             });
             // 소스 파일명 추출 및 중복 방지 (파일명 기준으로 중복 체크)
             String fileName = sourcePath.contains("/")
-                ? sourcePath.substring(sourcePath.lastIndexOf('/') + 1)
-                : sourcePath;
+                    ? sourcePath.substring(sourcePath.lastIndexOf('/') + 1)
+                    : sourcePath;
             final String displayName = "📂 " + fileName;
             boolean sourceExists = table.columns.stream()
-                .anyMatch(c -> displayName.equals(c.get("name")));
+                    .anyMatch(c -> displayName.equals(c.get("name")));
             if (!sourceExists) {
                 Map<String, String> col = new HashMap<>();
                 col.put("name", displayName);
@@ -150,22 +178,22 @@ public class SchemaParserService {
             }
         }
 
-
         // Pattern B: var = pd.DataFrame({'col1': ..., 'col2': ...}) → 명시적 컬럼 추출
         Pattern pdDfPattern = Pattern.compile(
-            "^(\\w+)\\s*=\\s*pd\\.DataFrame\\s*\\(\\s*\\{([^}]+)\\}",
-            Pattern.MULTILINE | Pattern.DOTALL
-        );
-        Matcher pdDfMatcher = pdDfPattern.matcher(fileContents);
+                "^(\\w+)\\s*=\\s*pd\\.DataFrame\\s*\\(\\s*\\{([^}]+)\\}",
+                Pattern.MULTILINE | Pattern.DOTALL);
+        Matcher pdDfMatcher = pdDfPattern.matcher(pythonClean);
         while (pdDfMatcher.find()) {
             String varName = pdDfMatcher.group(1);
             String dictBody = pdDfMatcher.group(2);
-            if (ignoreVars.contains(varName) || varName.length() <= 1) continue;
+            if (ignoreVars.contains(varName) || varName.length() <= 1)
+                continue;
             ParsedTable table = tables.computeIfAbsent(varName.toLowerCase(), k -> {
                 ParsedTable t = new ParsedTable();
                 t.name = varName;
                 return t;
             });
+
             // dict key 추출: 'col' 또는 "col" 패턴
             Pattern keyPattern = Pattern.compile("['\"]([^'\"]+)['\"]\\s*:");
             Matcher keyMatcher = keyPattern.matcher(dictBody);
@@ -183,15 +211,16 @@ public class SchemaParserService {
 
         // Pattern C: var['col'] = ... → 컬럼 동적 추가
         Pattern colAssignPattern = Pattern.compile(
-            "^(\\w+)\\s*\\[['\"]([^'\"]+)['\"]\\]\\s*=",
-            Pattern.MULTILINE
-        );
-        Matcher colAssignMatcher = colAssignPattern.matcher(fileContents);
+                "^(\\w+)\\s*\\[['\"]([^'\"]+)['\"]\\]\\s*=",
+                Pattern.MULTILINE);
+        Matcher colAssignMatcher = colAssignPattern.matcher(pythonClean);
         while (colAssignMatcher.find()) {
             String varName = colAssignMatcher.group(1);
             String colName = colAssignMatcher.group(2);
-            if (ignoreVars.contains(varName) || varName.length() <= 1) continue;
-            if (!tables.containsKey(varName.toLowerCase())) continue; // 이미 감지된 테이블에만 추가
+            if (ignoreVars.contains(varName) || varName.length() <= 1)
+                continue;
+            if (!tables.containsKey(varName.toLowerCase()))
+                continue; // 이미 감지된 테이블에만 추가
             ParsedTable table = tables.get(varName.toLowerCase());
             boolean exists = table.columns.stream().anyMatch(c -> colName.equals(c.get("name")));
             if (!exists) {
@@ -204,10 +233,9 @@ public class SchemaParserService {
 
         // Pattern D: result = df1.merge(df2, ...) → 테이블 간 관계
         Pattern mergePattern = Pattern.compile(
-            "^(\\w+)\\s*=\\s*(\\w+)\\.merge\\s*\\(\\s*(\\w+)",
-            Pattern.MULTILINE
-        );
-        Matcher mergeMatcher = mergePattern.matcher(fileContents);
+                "^(\\w+)\\s*=\\s*(\\w+)\\.merge\\s*\\(\\s*(\\w+)",
+                Pattern.MULTILINE);
+        Matcher mergeMatcher = mergePattern.matcher(pythonClean);
         while (mergeMatcher.find()) {
             String left = mergeMatcher.group(2).toLowerCase();
             String right = mergeMatcher.group(3).toLowerCase();
@@ -217,12 +245,110 @@ public class SchemaParserService {
             }
         }
 
+        // ============================================
+        // 4. Java JPA Entity 파싱 로직
+        // ============================================
+        String jpaClean = cleanJavaComments(fileContents);
+        String[] files = jpaClean.split("(?i)--- FILE:\\s*[^\\n]*");
+        for (String fileContent : files) {
+            if (fileContent.trim().isEmpty())
+                continue;
+            if (!fileContent.contains("@Entity"))
+                continue;
+
+            Pattern classPattern = Pattern.compile("public\\s+class\\s+(\\w+)");
+            Matcher classMatcher = classPattern.matcher(fileContent);
+            if (classMatcher.find()) {
+                String className = classMatcher.group(1);
+                ParsedTable table = new ParsedTable();
+                table.name = className;
+
+                // 필드 파싱: private Type fieldName; (기본값 대입 연산자 `= ...` 패턴 대응)
+                Pattern fieldPattern = Pattern.compile("private\\s+([\\w<>]+)\\s+(\\w+)(?:\\s*=.*)?\\s*;");
+                Matcher fieldMatcher = fieldPattern.matcher(fileContent);
+                while (fieldMatcher.find()) {
+                    String type = fieldMatcher.group(1);
+                    String name = fieldMatcher.group(2);
+
+                    Map<String, String> col = new HashMap<>();
+                    col.put("name", name);
+
+                    if (name.equalsIgnoreCase("id")) {
+                        col.put("type", type + " (PK)");
+                    } else if (fileContent.contains("@ManyToOne") && name.toLowerCase().endsWith("id")) {
+                        col.put("type", type + " (FK)");
+                    } else {
+                        col.put("type", type);
+                    }
+                    table.columns.add(col);
+
+                    // List<> 등 컬렉션이면 자식 관계로 추가
+                    if (type.startsWith("List<") || type.startsWith("Set<")) {
+                        String childType = type.substring(type.indexOf("<") + 1, type.indexOf(">")).toLowerCase();
+                        table.children.add(childType);
+                    } else if (fileContent.contains("@ManyToOne") && !type.equals("Long") && !type.equals("String")
+                            && !type.equals("Integer")) {
+                        // 다른 엔티티를 직접 참조하는 경우
+                        table.parents.add(type.toLowerCase());
+                    }
+                }
+                tables.put(className.toLowerCase(), table);
+            }
+        }
+
+        // ============================================
+        // 5. JSON 파싱 로직
+        // ============================================
+        String trimmed = fileContents.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            String lowerFileName = schemaFileName.toLowerCase();
+            Set<String> configFiles = new HashSet<>(Arrays.asList(
+                    "tsconfig.json", "jsconfig.json", "package-lock.json", "angular.json",
+                    ".eslintrc.json", "prettierrc.json", ".prettierrc.json", "tsconfig.node.json",
+                    "tsconfig.app.json", "nest-cli.json", "nx.json", "composer.lock"));
+
+            if (!configFiles.contains(lowerFileName)) {
+                try {
+                    ParsedTable table = new ParsedTable();
+                    table.name = schemaFileName;
+
+                    if (trimmed.startsWith("{")) {
+                        Map<String, Object> jsonMap = objectMapper.readValue(trimmed, Map.class);
+                        for (Map.Entry<String, Object> entry : jsonMap.entrySet()) {
+                            Map<String, String> colMap = new HashMap<>();
+                            colMap.put("name", entry.getKey());
+                            colMap.put("type", getJsonValueType(entry.getValue()));
+                            table.columns.add(colMap);
+                        }
+                    } else {
+                        List<Object> jsonList = objectMapper.readValue(trimmed, List.class);
+                        if (!jsonList.isEmpty() && jsonList.get(0) instanceof Map) {
+                            Map<String, Object> firstItem = (Map<String, Object>) jsonList.get(0);
+                            for (Map.Entry<String, Object> entry : firstItem.entrySet()) {
+                                Map<String, String> colMap = new HashMap<>();
+                                colMap.put("name", entry.getKey());
+                                colMap.put("type", getJsonValueType(entry.getValue()));
+                                table.columns.add(colMap);
+                            }
+                        } else {
+                            Map<String, String> colMap = new HashMap<>();
+                            colMap.put("name", "values");
+                            colMap.put("type", "Array");
+                            table.columns.add(colMap);
+                        }
+                    }
+                    tables.put(table.name.toLowerCase(), table);
+                } catch (Exception e) {
+                    log.warn("JSON 파싱 에러 - filePath: {}, message: {}", filePath, e.getMessage());
+                }
+            }
+        }
 
         // 유효하지 않은 테이블 제거: source 컬럼만 3개 초과이고 데이터 컬럼이 없는 경우 (stopwords 같은 유틸 테이블)
         tables.entrySet().removeIf(entry -> {
             ParsedTable t = entry.getValue();
             long sourceCount = t.columns.stream().filter(c -> "source".equals(c.get("type"))).count();
-            long dataCount   = t.columns.stream().filter(c -> !"source".equals(c.get("type"))).count();
+            long dataCount = t.columns.stream().filter(c -> !"source".equals(c.get("type"))).count();
             return sourceCount > 3 && dataCount == 0;
         });
 
@@ -240,14 +366,15 @@ public class SchemaParserService {
                 }
             }
         }
-        
+
         // SQL 네이밍 컨벤션을 활용한 FK 유추 (예: Payment의 order_id -> Order 테이블 참조)
         for (ParsedTable table : tables.values()) {
             String name = table.name.toLowerCase();
             for (Map<String, String> col : table.columns) {
                 String colName = col.get("name").toLowerCase();
                 for (String otherName : tables.keySet()) {
-                    if (name.equals(otherName)) continue;
+                    if (name.equals(otherName))
+                        continue;
                     if (colName.equals(otherName + "id") || colName.equals(otherName + "_id")) {
                         table.parents.add(otherName);
                         tables.get(otherName).children.add(name);
@@ -264,7 +391,7 @@ public class SchemaParserService {
         // ============================================
         Map<String, int[]> positions = new HashMap<>();
         Set<String> placed = new HashSet<>();
-        
+
         // 상위 테이블(Root) 찾기: 부모 테이블이 없는 테이블
         List<String> roots = new ArrayList<>();
         for (String name : tables.keySet()) {
@@ -280,7 +407,7 @@ public class SchemaParserService {
                 roots.add(name);
             }
         }
-        
+
         if (roots.isEmpty() && !tables.isEmpty()) {
             roots.add(tables.keySet().iterator().next());
         }
@@ -288,7 +415,8 @@ public class SchemaParserService {
         // 루트별로 우측으로 이동하며 트리 배치
         int currentX = 100;
         for (String root : roots) {
-            if (placed.contains(root)) continue;
+            if (placed.contains(root))
+                continue;
             int nextX = layoutTree(root, currentX, 100, positions, placed, tables);
             currentX = nextX + 380; // 테이블 폭 288px + 여백
         }
@@ -307,12 +435,13 @@ public class SchemaParserService {
         List<Map<String, Object>> nodes = new ArrayList<>();
         for (String name : tables.keySet()) {
             ParsedTable table = tables.get(name);
-            int[] pos = positions.getOrDefault(name, new int[]{100, 100});
+            int[] pos = positions.getOrDefault(name, new int[] { 100, 100 });
             nodes.add(createNode(table.name, table.columns, pos[0], pos[1]));
 
             // 부모 테이블과의 연결선(Edge) 생성
             for (String parentName : table.parents) {
-                if (!tables.containsKey(parentName)) continue;
+                if (!tables.containsKey(parentName))
+                    continue;
                 String source = parentName;
                 String target = name;
                 String relKey1 = source + "-" + target;
@@ -320,7 +449,7 @@ public class SchemaParserService {
 
                 if (!uniqueRelations.contains(relKey1) && !uniqueRelations.contains(relKey2)) {
                     uniqueRelations.add(relKey1);
-                    
+
                     ParsedTable parentTable = tables.get(parentName);
                     String label = getEdgeLabel(parentTable, table);
 
@@ -334,14 +463,16 @@ public class SchemaParserService {
 
                     Map<String, String> edgeData = new HashMap<>();
                     edgeData.put("label", label);
-                    
+
                     // 스타일 구분 (FK는 회색, Array 형태의 1:N은 파란색)
                     if (label.contains("[]") || label.toLowerCase().contains("order")) {
-                        edgeData.put("labelClassName", "bg-blue-50 text-blue-700 text-[10px] font-medium px-2 py-1 rounded border border-blue-200 shadow-sm z-10");
+                        edgeData.put("labelClassName",
+                                "bg-blue-50 text-blue-700 text-[10px] font-medium px-2 py-1 rounded border border-blue-200 shadow-sm z-10");
                     } else {
-                        edgeData.put("labelClassName", "bg-gray-50 text-gray-700 text-[10px] font-medium px-2 py-1 rounded border border-gray-200 shadow-sm z-10");
+                        edgeData.put("labelClassName",
+                                "bg-gray-50 text-gray-700 text-[10px] font-medium px-2 py-1 rounded border border-gray-200 shadow-sm z-10");
                     }
-                    
+
                     edge.put("data", edgeData);
                     edges.add(edge);
                 }
@@ -351,7 +482,7 @@ public class SchemaParserService {
         Map<String, Object> result = new HashMap<>();
         result.put("nodes", nodes);
         result.put("edges", edges);
-        
+
         try {
             return objectMapper.writeValueAsString(result);
         } catch (Exception e) {
@@ -363,30 +494,34 @@ public class SchemaParserService {
     /**
      * 재귀적으로 자식 테이블을 아래쪽(y축 방향)으로 배치하고, 형제 노드가 있으면 우측(x축 방향)으로 펼침
      */
-    private int layoutTree(String modelName, int x, int y, Map<String, int[]> positions, Set<String> placed, Map<String, ParsedTable> tables) {
-        if (placed.contains(modelName)) return x;
+    private int layoutTree(String modelName, int x, int y, Map<String, int[]> positions, Set<String> placed,
+            Map<String, ParsedTable> tables) {
+        if (placed.contains(modelName))
+            return x;
         placed.add(modelName);
-        positions.put(modelName, new int[]{x, y});
-        
+        positions.put(modelName, new int[] { x, y });
+
         ParsedTable table = tables.get(modelName);
-        if (table == null) return x;
-        
+        if (table == null)
+            return x;
+
         List<String> children = new ArrayList<>();
         for (String child : table.children) {
             if (tables.containsKey(child) && !placed.contains(child)) {
                 children.add(child);
             }
         }
-        
+
         if (children.isEmpty()) {
             return x;
         }
-        
+
         int childX = x;
         for (int i = 0; i < children.size(); i++) {
             String child = children.get(i);
-            if (placed.contains(child)) continue;
-            
+            if (placed.contains(child))
+                continue;
+
             // 두 번째 자식부터는 우측으로 넓혀서 배치
             if (i > 0) {
                 childX += 380;
@@ -437,17 +572,80 @@ public class SchemaParserService {
         Map<String, Object> node = new HashMap<>();
         node.put("id", name.toLowerCase());
         node.put("type", "tableNode");
-        
+
         Map<String, Integer> position = new HashMap<>();
         position.put("x", x);
         position.put("y", y);
         node.put("position", position);
-        
+
         Map<String, Object> data = new HashMap<>();
         data.put("title", name);
         data.put("icon", "Database");
         data.put("columns", columns);
         node.put("data", data);
         return node;
+    }
+
+    private String getJsonValueType(Object value) {
+        if (value == null)
+            return "Null";
+        if (value instanceof String)
+            return "String";
+        if (value instanceof Number)
+            return "Number";
+        if (value instanceof Boolean)
+            return "Boolean";
+        if (value instanceof List)
+            return "Array";
+        if (value instanceof Map)
+            return "Object";
+        return "Unknown";
+    }
+
+    private String cleanSqlComments(String sql) {
+        if (sql == null)
+            return "";
+        String noMulti = sql.replaceAll("(?s)/\\*.*?\\*/", "");
+        String[] lines = noMulti.split("\n");
+        StringBuilder sb = new StringBuilder();
+        for (String line : lines) {
+            int commentIdx = line.indexOf("--");
+            if (commentIdx != -1) {
+                line = line.substring(0, commentIdx);
+            }
+            sb.append(line).append("\n");
+        }
+        return sb.toString();
+    }
+
+    private String cleanJavaComments(String javaCode) {
+        if (javaCode == null)
+            return "";
+        String noMulti = javaCode.replaceAll("(?s)/\\*.*?\\*/", "");
+        String[] lines = noMulti.split("\n");
+        StringBuilder sb = new StringBuilder();
+        for (String line : lines) {
+            int commentIdx = line.indexOf("//");
+            if (commentIdx != -1) {
+                line = line.substring(0, commentIdx);
+            }
+            sb.append(line).append("\n");
+        }
+        return sb.toString();
+    }
+
+    private String cleanPythonComments(String pythonCode) {
+        if (pythonCode == null)
+            return "";
+        String[] lines = pythonCode.split("\n");
+        StringBuilder sb = new StringBuilder();
+        for (String line : lines) {
+            int commentIdx = line.indexOf("#");
+            if (commentIdx != -1) {
+                line = line.substring(0, commentIdx);
+            }
+            sb.append(line).append("\n");
+        }
+        return sb.toString();
     }
 }

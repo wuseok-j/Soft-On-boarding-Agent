@@ -8,6 +8,8 @@ import java.util.Optional;
 
 public interface SchemaAnalysisResultRepository extends JpaRepository<SchemaAnalysisResult, Long> {
     Optional<SchemaAnalysisResult> findByRepositoryUrl(String repositoryUrl);
-    Optional<SchemaAnalysisResult> findBySpaceIdAndFilePath(Long spaceId, String filePath);
+
+    Optional<SchemaAnalysisResult> findFirstBySpaceIdAndFilePathOrderByIdDesc(Long spaceId, String filePath);
+
     List<SchemaAnalysisResult> findAllBySpaceId(Long spaceId);
 }

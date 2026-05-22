@@ -9,7 +9,9 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "schema_analysis_results")
+@Table(name = "schema_analysis_results", uniqueConstraints = {
+        @UniqueConstraint(name = "uc_space_filepath", columnNames = { "space_id", "file_path" })
+})
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class SchemaAnalysisResult {
@@ -36,7 +38,8 @@ public class SchemaAnalysisResult {
     private LocalDateTime analyzedAt;
 
     @Builder
-    public SchemaAnalysisResult(Long spaceId, String filePath, String repositoryUrl, String commitHash, String analyzedJson) {
+    public SchemaAnalysisResult(Long spaceId, String filePath, String repositoryUrl, String commitHash,
+            String analyzedJson) {
         this.spaceId = spaceId;
         this.filePath = filePath;
         this.repositoryUrl = repositoryUrl;

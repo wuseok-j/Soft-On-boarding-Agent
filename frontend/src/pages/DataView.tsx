@@ -1,5 +1,5 @@
-import { useMemo, useEffect, useState } from 'react';
-import { apiFetch } from '../services/apiClient';
+import { useMemo, useEffect } from 'react';
+import axios from 'axios';
 import ReactFlow, {
   Background,
   Controls,
@@ -101,127 +101,185 @@ const CustomEdge = ({
 };
 
 const getLayoutedElements = (nodes: any[], edges: any[]) => {
-  try {
-    const dagreGraph = new dagre.graphlib.Graph();
-    dagreGraph.setDefaultEdgeLabel(() => ({}));
-    
-    // TB: Top to Bottom (수직 레이아웃), 노드와 랭크(계층) 간격 설정
-    dagreGraph.setGraph({ rankdir: 'TB', nodesep: 80, ranksep: 120, align: 'UL' });
+  if (nodes.length === 0) return { nodes, edges };
 
-    nodes.forEach((node) => {
+  // 1. 무방향 인접 리스트 생성 (연결 컴포넌트를 찾기 위함)
+  const adj = new Map<string, string[]>();
+  nodes.forEach(node => adj.set(node.id, []));
+  edges.forEach(edge => {
+    if (adj.has(edge.source) && adj.has(edge.target)) {
+      adj.get(edge.source)!.push(edge.target);
+      adj.get(edge.target)!.push(edge.source);
+    }
+  });
+
+  // 2. BFS 탐색을 통한 연결 컴포넌트(Connected Components) 추출
+  const visited = new Set<string>();
+  const components: string[][] = [];
+
+  nodes.forEach(node => {
+    if (!visited.has(node.id)) {
+      const component: string[] = [];
+      const queue = [node.id];
+      visited.add(node.id);
+
+      while (queue.length > 0) {
+        const curr = queue.shift()!;
+        component.push(curr);
+
+        const neighbors = adj.get(curr) || [];
+        neighbors.forEach(neighbor => {
+          if (!visited.has(neighbor)) {
+            visited.add(neighbor);
+            queue.push(neighbor);
+          }
+        });
+      }
+      components.push(component);
+    }
+  });
+
+  // 테이블 수가 많은 중요도가 높은 그룹을 우선 배치
+  components.sort((a, b) => b.length - a.length);
+
+  // 3. 각 컴포넌트별 개별 dagre 레이아웃 수행 및 그리드 정렬
+  const layoutedNodes: any[] = [];
+  const COLUMNS = 2; // 가로 최대 2개의 테이블 뭉치 배치
+  const GROUP_GAP_X = 250; // 그룹 간 X축 간격
+  const GROUP_GAP_Y = 200; // 그룹 간 Y축 간격
+
+  let currentGroupX = 0;
+  let currentGroupY = 0;
+  let maxRowHeight = 0;
+  let colIndex = 0;
+
+  components.forEach((compNodeIds) => {
+    const compNodes = nodes.filter(n => compNodeIds.includes(n.id));
+    const compEdges = edges.filter(e => compNodeIds.includes(e.source) && compNodeIds.includes(e.target));
+
+    const g = new dagre.graphlib.Graph();
+    g.setDefaultEdgeLabel(() => ({}));
+    g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 100, align: 'UL' });
+
+    compNodes.forEach(node => {
       const width = 288; // w-72는 288px
       const columnsCount = node.data?.columns?.length || 0;
-      const height = 70 + columnsCount * 32; // 헤더 영역 + 컬럼 행 높이 합산
-      dagreGraph.setNode(node.id, { width, height });
+      const height = 70 + columnsCount * 32;
+      g.setNode(node.id, { width, height });
     });
 
-    edges.forEach((edge) => {
-      if (edge.source && edge.target) {
-        dagreGraph.setEdge(edge.source, edge.target);
-      }
+    compEdges.forEach(edge => {
+      g.setEdge(edge.source, edge.target);
     });
 
-    dagre.layout(dagreGraph);
+    dagre.layout(g);
 
-    const layoutedNodes = nodes.map((node) => {
-      const nodeWithPosition = dagreGraph.node(node.id);
-      if (!nodeWithPosition) return node; // 레이아웃 계산 실패 시 원본 반환
-      
+    // 컴포넌트 내 노드들의 상대적 경계 박스 계산
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    const tempLayouted: any[] = [];
+
+    compNodes.forEach(node => {
+      const dNode = g.node(node.id);
       const width = 288;
       const columnsCount = node.data?.columns?.length || 0;
       const height = 70 + columnsCount * 32;
-      
-      return {
-        ...node,
-        position: {
-          x: nodeWithPosition.x - width / 2,
-          y: nodeWithPosition.y - height / 2,
-        },
-      };
+
+      const rx = dNode.x - width / 2;
+      const ry = dNode.y - height / 2;
+
+      minX = Math.min(minX, rx);
+      maxX = Math.max(maxX, rx + width);
+      minY = Math.min(minY, ry);
+      maxY = Math.max(maxY, ry + height);
+
+      tempLayouted.push({ node, rx, ry });
     });
 
-    return { nodes: layoutedNodes, edges };
-  } catch (error) {
-    console.error("Dagre 레이아웃 계산 실패, 원본 위치를 유지합니다.", error);
-    return { nodes, edges };
-  }
+    const compWidth = maxX - minX;
+    const compHeight = maxY - minY;
+
+    // 열 인덱스가 허용치를 넘어가면 줄바꿈 처리
+    if (colIndex >= COLUMNS) {
+      currentGroupX = 0;
+      currentGroupY += maxRowHeight + GROUP_GAP_Y;
+      maxRowHeight = 0;
+      colIndex = 0;
+    }
+
+    // 그룹별 시작 원점(currentGroupX, currentGroupY)에 오프셋 적용하여 절대좌표 설정
+    tempLayouted.forEach(item => {
+      layoutedNodes.push({
+        ...item.node,
+        position: {
+          x: currentGroupX + (item.rx - minX),
+          y: currentGroupY + (item.ry - minY),
+        }
+      });
+    });
+
+    maxRowHeight = Math.max(maxRowHeight, compHeight);
+    currentGroupX += compWidth + GROUP_GAP_X;
+    colIndex++;
+  });
+
+  return { nodes: layoutedNodes, edges };
 };
 
-
-const nodeTypes = { tableNode: TableNode };
-const edgeTypes = { customEdge: CustomEdge };
-
 export function DataView() {
+  const nodeTypes = useMemo(() => ({ tableNode: TableNode }), []);
+  const edgeTypes = useMemo(() => ({ customEdge: CustomEdge }), []);
+
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [isLoading, setIsLoading] = useState(true);
 
   const user = useAuthStore((state) => state.user);
   const token = useAuthStore((state) => state.token);
 
   useEffect(() => {
     const fetchSchemaData = async () => {
-      if (!user?.spaceId) return;
+      if (!user?.spaceId || !token) return;
 
       try {
-        setIsLoading(true);
-        const response = await apiFetch(`/api/spaces/${user.spaceId}/data-view/schema`);
-        
-        if (response.ok) {
-          const data = await response.json();
-          const rawNodes = data.nodes || [];
-          const rawEdges = data.edges || [];
-          
-          // 중복 id를 가진 노드와 엣지를 제거하여 React Flow 키 충돌 방지
-          const uniqueNodes = Array.from(new Map(rawNodes.map((n: any) => [n.id, n])).values());
-          const uniqueEdges = Array.from(new Map(rawEdges.map((e: any) => [e.id, e])).values());
-          
-          if (uniqueNodes.length > 0) {
-            const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(uniqueNodes, uniqueEdges);
+        const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+
+        const response = await axios.get(
+          `${API_BASE}/api/spaces/${user.spaceId}/data-view/schema`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        );
+
+        if (response.data) {
+          const rawNodes = response.data.nodes || [];
+          const rawEdges = response.data.edges || [];
+
+          if (rawNodes.length > 0) {
+            const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(rawNodes, rawEdges);
             setNodes(layoutedNodes);
             setEdges(layoutedEdges);
           } else {
             setNodes([]);
             setEdges([]);
           }
-        } else {
-            console.error("Schema fetch returned non-ok status:", response.status);
-            setNodes([]);
-            setEdges([]);
         }
       } catch (error) {
-        console.error("백엔드 API 호출 실패:", error);
-        setNodes([]);
-        setEdges([]);
-      } finally {
-        setIsLoading(false);
+        console.error("백엔드 API 호출 실패, 기본 더미 데이터를 유지합니다.", error);
       }
     };
 
     fetchSchemaData();
-  }, [user?.spaceId, setNodes, setEdges]);
+  }, [user?.spaceId, token, setNodes, setEdges]);
 
   return (
     <div className="w-full h-full relative overflow-hidden flex">
       {/* Main Diagram Area with React Flow */}
-      <div className="flex-1 relative w-full h-full bg-[#FAFAFA]">
-        {isLoading ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-white/50 backdrop-blur-sm">
-            <div className="w-8 h-8 border-4 border-violet-500 border-t-transparent rounded-full animate-spin"></div>
-            <p className="mt-4 text-gray-600 font-medium">데이터 모델을 불러오는 중입니다...</p>
-          </div>
-        ) : nodes.length === 0 ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
-            <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-              <Database className="w-10 h-10 text-gray-400" />
-            </div>
-            <h3 className="text-xl font-bold text-gray-800 mb-2">데이터 모델이 없습니다</h3>
-            <p className="text-gray-500 max-w-md text-center">
-              아직 데이터베이스 스키마 정보가 분석되지 않았거나, 파일에서 데이터 모델을 찾을 수 없습니다. LLM 파이프라인에서 데이터 분석이 완료되었는지 확인해주세요.
-            </p>
-          </div>
-        ) : null}
-
+      <div className="flex-1 relative w-full h-full">
         <ReactFlow
           nodes={nodes}
           edges={edges}
