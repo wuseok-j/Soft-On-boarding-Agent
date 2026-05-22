@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { 
   Folder, FileCode2, Palette, Box, Search,
-  ChevronDown, ChevronRight, BookOpen, GitCommit, GitPullRequest, Clock
+  ChevronDown, ChevronRight, BookOpen, GitCommit, Clock
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { interfaceApi } from '../services/interfaceApi';
@@ -28,7 +28,7 @@ const FigmaIcon = ({ className }: { className?: string }) => (
 );
 
 // Color Swatch Component for Light Theme
-const ColorSwatch = ({ name, hex, bgClass, borderClass = 'border-gray-200' }: { name: string, hex: string, bgClass: string, borderClass?: string }) => {
+const ColorSwatch = ({ name, hex, borderClass = 'border-gray-200' }: { name: string, hex: string, borderClass?: string }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -143,7 +143,6 @@ export function InterfaceView() {
 
   // Parse dynamic design tokens if they exist in the DB
   const designTokenComponents = componentsData.filter(comp => comp.elementType === 'DESIGN_TOKEN');
-  const hasDynamicTokens = designTokenComponents.length > 0;
 
   // Helpers to parse token data from extraInfo strings
   const getParsedSwatches = () => {
@@ -252,13 +251,11 @@ export function InterfaceView() {
                 <h4 className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-2.5">Colors</h4>
                 <div className="grid grid-cols-4 gap-3">
                   {swatches.map((swatch, idx) => {
-                    const isDark = parseInt(swatch.hex.replace('#', ''), 16) < 0xffffff / 2; // Rough brightness check
                     return (
                       <ColorSwatch 
                         key={idx} 
                         name={swatch.name} 
                         hex={swatch.hex} 
-                        bgClass="" 
                         borderClass="border-gray-200" 
                       />
                     );
