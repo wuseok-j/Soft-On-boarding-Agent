@@ -51,7 +51,7 @@ def categorize_files_with_gemini(file_paths):
             
         if any(kw in lower_path for kw in ['components', 'pages', 'views', 'ui', 'styles', 'css', 'tailwind', '.jsx', '.tsx', 'router']):
             categorized["Interface"].append(path)
-        elif any(kw in lower_path for kw in ['entity', 'domain', 'dto', 'schema', 'prisma', 'sql', 'ddl', 'models', 'migrations']):
+        elif any(kw in lower_path for kw in ['entity', 'schema', 'prisma', 'sql', 'ddl', 'models', 'migrations']):
             categorized["Data"].append(path)
         elif any(kw in lower_path for kw in ['.github', 'workflows', 'docker', 'build.gradle', 'pom.xml', 'package.json', 'Makefile', 'ci', 'cd']):
             categorized["Process"].append(path)
@@ -172,7 +172,7 @@ def analyze_functional_view(repo_name, files_content_dict):
         combined_content += f"\n\n--- FILE: {file_path} ---\n{content}"
         
     response = call_gemini_with_retry(
-        model_name='gemini-1.5-flash',
+        model_name='gemini-3.5-flash',
         contents=f"레포지토리: {repo_name}\n\n파일 내용 모음:{combined_content}",
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
@@ -297,7 +297,7 @@ def analyze_interface_view(repo_name, files_content_str):
     """
     
     response = call_gemini_with_retry(
-        model_name='gemini-1.5-flash',
+        model_name='gemini-3.5-flash',
         contents=f"레포지토리: {repo_name}\n\n파일 내용들:\n{files_content_str}",
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
@@ -557,7 +557,7 @@ def analyze_process_view(repo_name, files_content_str):
     """
     
     response = client.models.generate_content(
-        model='gemini-1.5-flash',
+        model='gemini-3.1-flash-lite',
         contents=f"레포지토리: {repo_name}\n\n파일 내용들:\n{files_content_str}",
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,

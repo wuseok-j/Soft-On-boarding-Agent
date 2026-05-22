@@ -217,65 +217,6 @@ public class SchemaParserService {
             }
         }
 
-        // ============================================
-        // 4. Java Class 파싱 로직 (JPA & Firebase & 일반 POJO 지원)
-        // ============================================
-        String[] files = fileContents.split("--- File: ");
-        for (String fileContent : files) {
-            // Spring Bean 클래스나 설정 클래스 등은 파싱 제외
-            if (fileContent.contains("@RestController") || 
-                fileContent.contains("@Service") || 
-                fileContent.contains("@Repository") || 
-                fileContent.contains("@Component") ||
-                fileContent.contains("@Configuration")) {
-                continue;
-            }
-
-            Pattern classPattern = Pattern.compile("public\\s+class\\s+(\\w+)");
-            Matcher classMatcher = classPattern.matcher(fileContent);
-            if (classMatcher.find()) {
-                String className = classMatcher.group(1);
-                
-                // Controller, Service 등으로 끝나는 이름이면 안전하게 제외
-                if (className.endsWith("Controller") || className.endsWith("Service") || 
-                    className.endsWith("Repository") || className.endsWith("Config")) {
-                    continue;
-                }
-                ParsedTable table = new ParsedTable();
-                table.name = className;
-
-                // 필드 파싱: 접근제어자 Type fieldName [= 초기화];
-                Pattern fieldPattern = Pattern.compile("(?:private|public|protected)\\s+([\\w<>,\\[\\]]+)\\s+(\\w+)\\s*(?:=|;)");
-                Matcher fieldMatcher = fieldPattern.matcher(fileContent);
-                while (fieldMatcher.find()) {
-                    String type = fieldMatcher.group(1);
-                    String name = fieldMatcher.group(2);
-
-                    Map<String, String> col = new HashMap<>();
-                    col.put("name", name);
-                    
-                    if (name.equalsIgnoreCase("id")) {
-                        col.put("type", type + " (PK)");
-                    } else if (fileContent.contains("@ManyToOne") && name.toLowerCase().endsWith("id")) {
-                         col.put("type", type + " (FK)");
-                    } else {
-                        col.put("type", type);
-                    }
-                    table.columns.add(col);
-                    
-                    // List<> 등 컬렉션이면 자식 관계로 추가
-                    if (type.startsWith("List<") || type.startsWith("Set<")) {
-                        String childType = type.substring(type.indexOf("<") + 1, type.indexOf(">")).toLowerCase();
-                        table.children.add(childType);
-                    } else if (fileContent.contains("@ManyToOne") && !type.equals("Long") && !type.equals("String") && !type.equals("Integer")) {
-                        // 다른 엔티티를 직접 참조하는 경우
-                        table.parents.add(type.toLowerCase());
-                    }
-                }
-                tables.put(className.toLowerCase(), table);
-            }
-        }
-
 
         // 유효하지 않은 테이블 제거: source 컬럼만 3개 초과이고 데이터 컬럼이 없는 경우 (stopwords 같은 유틸 테이블)
         tables.entrySet().removeIf(entry -> {
@@ -410,10 +351,6 @@ public class SchemaParserService {
         Map<String, Object> result = new HashMap<>();
         result.put("nodes", nodes);
         result.put("edges", edges);
-        
-        if (nodes.isEmpty()) {
-            log.warn("스키마 분석 결과 추출된 테이블 노드가 없습니다. 정규식 매칭 실패 또는 대상 파일이 유효하지 않을 수 있습니다.");
-        }
         
         try {
             return objectMapper.writeValueAsString(result);

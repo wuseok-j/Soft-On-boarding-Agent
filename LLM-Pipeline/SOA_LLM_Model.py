@@ -1,6 +1,5 @@
 import os
 import sys
-import subprocess
 from pathlib import Path
 # pyrefly: ignore [missing-import]
 from dotenv import load_dotenv
@@ -30,159 +29,6 @@ def parse_repo_info(repo_url):
     return None, None
 
 
-def ensure_tables_exist():
-    """
-    Supabase에 필요한 테이블이 없으면 psycopg2로 직접 연결해 자동 생성합니다.
-    psycopg2가 없으면 자동으로 설치합니다.
-    """
-    db_host = os.getenv("DB_HOST")
-    db_port = int(os.getenv("DB_PORT", "6543"))
-    db_name = os.getenv("DB_NAME", "postgres")
-    db_user = os.getenv("DB_USER")
-    db_password = os.getenv("DB_PASSWORD")
-
-    if not all([db_host, db_user, db_password]):
-        print("  [WARN] DB_HOST/DB_USER/DB_PASSWORD가 .env에 없어 테이블 자동 생성을 건너뜁니다.")
-        return
-
-    # psycopg2가 없으면 자동 설치
-    try:
-        import psycopg2
-    except ImportError:
-        print("  [INFO] psycopg2 설치 중...")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "psycopg2-binary", "-q"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        import psycopg2
-
-    try:
-        conn = psycopg2.connect(
-            host=db_host,
-            port=db_port,
-            database=db_name,
-            user=db_user,
-            password=db_password,
-            connect_timeout=10,
-            sslmode="require"
-        )
-        cur = conn.cursor()
-
-        # 1. functional 테이블 (FOREST/TREE/RING 계층 구조)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS functional (
-                id          BIGSERIAL PRIMARY KEY,
-                space_id    BIGINT NOT NULL,
-                repo_name   TEXT,
-                parent_id   BIGINT,
-                name        TEXT NOT NULL,
-                element_type VARCHAR(10) NOT NULL,
-                description TEXT,
-                file_path   TEXT,
-                api_method  VARCHAR(10),
-                api_url     TEXT,
-                created_at  TIMESTAMPTZ DEFAULT NOW()
-            );
-        """)
-
-        # 2. interface 테이블
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS interface (
-                id           BIGSERIAL PRIMARY KEY,
-                space_id     BIGINT,
-                repo_name    TEXT,
-                file_path    TEXT,
-                element_type VARCHAR(50),
-                name         TEXT,
-                description  TEXT,
-                extra_info   TEXT,
-                created_at   TIMESTAMPTZ DEFAULT NOW()
-            );
-        """)
-
-        # 3. data 테이블 (예약어이므로 따옴표 처리)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS "data" (
-                id          BIGSERIAL PRIMARY KEY,
-                space_id    BIGINT,
-                repo_name   TEXT,
-                file_path   TEXT,
-                file_name   TEXT,
-                created_at  TIMESTAMPTZ DEFAULT NOW()
-            );
-        """)
-
-        # 4. process 테이블
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS process (
-                id           BIGSERIAL PRIMARY KEY,
-                space_id     BIGINT,
-                repo_name    TEXT,
-                file_path    TEXT,
-                element_type VARCHAR(50),
-                name         TEXT,
-                description  TEXT,
-                tech_stack   TEXT,
-                env_vars     TEXT,
-                created_at   TIMESTAMPTZ DEFAULT NOW()
-            );
-        """)
-
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("  [OK] 테이블 자동 생성/확인 완료 (functional, interface, data, process)")
-
-    except Exception as e:
-        print(f"  [ERROR] 테이블 자동 생성 실패: {e}")
-        print("  [HINT] Supabase 대시보드 > SQL Editor에서 수동으로 테이블을 생성해야 할 수 있습니다.")
-
-
-
-import psycopg2.extras
-
-def get_db_connection():
-    db_host = os.getenv("DB_HOST")
-    db_port = int(os.getenv("DB_PORT", "6543"))
-    db_name = os.getenv("DB_NAME", "postgres")
-    db_user = os.getenv("DB_USER")
-    db_password = os.getenv("DB_PASSWORD")
-    
-    return psycopg2.connect(
-        host=db_host,
-        port=db_port,
-        database=db_name,
-        user=db_user,
-        password=db_password,
-        connect_timeout=10,
-        sslmode="require"
-    )
-
-def insert_into_db(table_name, payload_list):
-    if not payload_list:
-        return []
-    
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    
-    columns = list(payload_list[0].keys())
-    query = "INSERT INTO {} ({}) VALUES %s RETURNING id".format(
-        """ + table_name + """ if table_name == 'data' else table_name,
-        ', '.join(columns)
-    )
-    
-    values = [[item.get(col) for col in columns] for item in payload_list]
-    
-    psycopg2.extras.execute_values(cur, query, values, fetch=True)
-    
-    inserted_rows = cur.fetchall()
-    conn.commit()
-    cur.close()
-    conn.close()
-    
-    return inserted_rows
-
 def main():
     if len(sys.argv) < 3:
         print("사용법: python SOA_LLM_Model.py <github_url> <space_id>")
@@ -211,8 +57,7 @@ def main():
     # -------------------------------------------
     # Step 0: 테이블 자동 생성 (없으면 create)
     # -------------------------------------------
-    print("[Step 0] 테이블 자동 생성 확인 중...")
-    ensure_tables_exist()
+    print("[Step 0] 준비 완료. 데이터 적재를 시작합니다...")
 
     # -------------------------------------------
     # Supabase 클라이언트 초기화
@@ -256,11 +101,8 @@ def main():
                         for f in forest_nodes
                     ]
                     try:
-                        inserted_rows = insert_into_db("functional", payload)
-                        if inserted_rows:
-                            class DummyRes: pass
-                            res = DummyRes()
-                            res.data = inserted_rows
+                        res = supabase.table("functional").insert(payload).execute()
+                        if res.data:
                             for original, inserted in zip(forest_nodes, res.data):
                                 temp_to_actual_id[original.get("temp_id")] = inserted.get("id")
                         print(f"    [OK] Functional FOREST {len(payload)}건 적재 완료")
@@ -283,11 +125,8 @@ def main():
                         for t in tree_nodes
                     ]
                     try:
-                        inserted_rows = insert_into_db("functional", payload)
-                        if inserted_rows:
-                            class DummyRes: pass
-                            res = DummyRes()
-                            res.data = inserted_rows
+                        res = supabase.table("functional").insert(payload).execute()
+                        if res.data:
                             for original, inserted in zip(tree_nodes, res.data):
                                 temp_to_actual_id[original.get("temp_id")] = inserted.get("id")
                         print(f"    [OK] Functional TREE {len(payload)}건 적재 완료")
@@ -312,7 +151,7 @@ def main():
                         for r in ring_nodes
                     ]
                     try:
-                        insert_into_db("functional", payload)
+                        supabase.table("functional").insert(payload).execute()
                         print(f"    [OK] Functional RING {len(payload)}건 적재 완료")
                     except Exception as e:
                         print(f"    [FAIL] Functional RING 적재 실패: {e}")
@@ -338,7 +177,7 @@ def main():
                     item["space_id"] = SPACE_ID
                     item.setdefault("created_at", datetime.now(timezone.utc).isoformat())
                 try:
-                    insert_into_db("interface", iface_data)
+                    supabase.table("interface").insert(iface_data).execute()
                     print(f"    [OK] Interface View {len(iface_data)}건 적재 완료")
                 except Exception as e:
                     print(f"    [FAIL] Interface View 적재 실패: {e}")
@@ -360,7 +199,7 @@ def main():
             for item in schema_data:
                 item["space_id"] = SPACE_ID
             try:
-                insert_into_db("data", schema_data)
+                supabase.table("data").insert(schema_data).execute()
                 print(f"    [OK] Data View {len(schema_data)}건 적재 완료")
             except Exception as e:
                 print(f"    [FAIL] Data View 적재 실패: {e}")
@@ -384,7 +223,7 @@ def main():
                     item["space_id"] = SPACE_ID
                     item.setdefault("created_at", datetime.now(timezone.utc).isoformat())
                 try:
-                    insert_into_db("process", proc_data)
+                    supabase.table("process").insert(proc_data).execute()
                     print(f"    [OK] Process View {len(proc_data)}건 적재 완료")
                 except Exception as e:
                     print(f"    [FAIL] Process View 적재 실패: {e}")
@@ -421,7 +260,7 @@ def main():
         try:
             for i in range(0, len(commits_data), 100):
                 chunk = commits_data[i:i + 100]
-                insert_into_db("commit_history", chunk)
+                supabase.table("commit_history").insert(chunk).execute()
             print(f"  [OK] CommitHistory {len(commits_data)}건 적재 완료")
         except Exception as e:
             print(f"  [FAIL] CommitHistory 적재 실패: {e}")
@@ -430,7 +269,7 @@ def main():
     # 최종 검증
     # ==========================================
     print("\n[데이터 검증] Supabase 적재 결과 확인...")
-    check_tables = [] # supabase verification disabled
+    check_tables = ["functional", "interface", "data", "process", "commit_history"]
     for table_name in check_tables:
         try:
             response = supabase.table(table_name).select("*", count="exact").limit(1).execute()
