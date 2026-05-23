@@ -3,6 +3,7 @@ import axios from 'axios';
 import ReactFlow, {
   Background,
   Controls,
+  MiniMap,
   EdgeLabelRenderer,
   BaseEdge,
   getSmoothStepPath,
@@ -311,6 +312,13 @@ export function DataView() {
         >
           <Background color="#E5E7EB" gap={16} size={1} />
           <Controls className="mb-4 ml-4" />
+          <MiniMap 
+            zoomable
+            pannable
+            nodeColor={(node) => '#9CA3AF'}
+            maskColor="rgba(250, 250, 250, 0.6)"
+            className="rounded-xl border border-gray-200 overflow-hidden shadow-sm"
+          />
         </ReactFlow>
       </div>
     </div>
